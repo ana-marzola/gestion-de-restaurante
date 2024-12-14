@@ -1,106 +1,166 @@
-# app_restaurante.py
-
+import tkinter as tk
+from tkinter import ttk, messagebox
 import mysql.connector
-import time
-from datetime import datetime
 
-
-def conectar_bd():
-    """
-    Función para establecer la conexión con la base de datos.
-    Retorna el objeto 'connection' y 'cursor' para interactuar con la DB.
-    """
+# Conexión a la base de datos
+def conectar_db():
     try:
-        # Establecer la conexión con la base de datos
         conexion = mysql.connector.connect(
-            host="localhost",  # Cambiar si la BD está en otro servidor
-            user="root",  # Cambiar al usuario de la BD
-            password="password",  # Cambiar a la contraseña de la BD
-            database="restaurante_db"  # Nombre de la base de datos
+            host="localhost",  # Cambia por tu host si es necesario
+            user="root",       # Cambia por tu usuario de MySQL
+            password="",       # Cambia por tu contraseña
+            database="restaurante_db"
         )
+        return conexion
+    except mysql.connector.Error as err:
+        messagebox.showerror("Error de conexión", f"No se pudo conectar a la base de datos: {err}")
+        return None
 
-        # Crear cursor para ejecutar consultas
-        cursor = conexion.cursor()
-        return conexion, cursor
-    except mysql.connector.Error as e:
-        print("Error al conectar a la base de datos:", e)
-        return None, None
-
-
-def cerrar_bd(conexion, cursor):
-    """
-    Función para cerrar la conexión y el cursor de la base de datos.
-    """
-    if cursor:
-        cursor.close()
+# Función para cargar mesas disponibles
+def cargar_mesas():
+    conexion = conectar_db()
     if conexion:
+        cursor = conexion.cursor()
+        cursor.execute("SELECT mesa_id, numero_mesa FROM mesas WHERE estado = 'Disponible'")
+        mesas = cursor.fetchall()
         conexion.close()
+        return mesas
+    return []
 
+# Función para registrar una nueva mesa
+def registrar_mesa():
+    numero_mesa = entry_numero_mesa.get()
+    ubicacion = entry_ubicacion.get()
 
-def mostrar_menu():
-    """
-    Muestra el menú principal de opciones de la aplicación de restaurante.
-    """
-    print("\n" + "=" * 50)
-    print("    SISTEMA DE GESTIÓN DE RESTAURANTE  ")
-    print("=" * 50)
-    print("1. Crear una nueva reservación")
-    print("2. Ver reservaciones existentes")
-    print("3. Registrar un nuevo pedido")
-    print("4. Ver pedidos existentes")
-    print("5. Ver inventario de ingredientes")
-    print("6. Salir de la aplicación")
-
-
-def crear_reservacion():
-    """
-    Registra una nueva reservación en la tabla 'reservaciones'.
-    """
-    conexion, cursor = conectar_bd()
-
-    if not conexion or not cursor:
-        print("No se pudo conectar a la base de datos para crear una reservación.")
+    if not (numero_mesa and ubicacion):
+        messagebox.showwarning("Campos vacíos", "Por favor completa todos los campos.")
         return
 
-    print("\nCreación de una nueva reservación:")
-    nombre_cliente = input("Ingrese el nombre del cliente: ")
-    fecha_reserva = input("Ingrese la fecha de la reservación (YYYY-MM-DD): ")
-    hora_reserva = input("Ingrese la hora de la reservación (HH:MM:SS): ")
-    mesa_id = input("Ingrese el número de mesa: ")
+    conexion = conectar_db()
+    if conexion:
+        try:
+            cursor = conexion.cursor()
+            
+            # Validar si el número de mesa ya existe
+            cursor.execute("SELECT COUNT(*) FROM mesas WHERE numero_mesa = %s", (numero_mesa,))
+            existe_mesa = cursor.fetchone()[0]
+            
+            if existe_mesa > 0:
+                messagebox.showerror("Número de mesa duplicado", "El número de mesa ya existe. Ingresa otro número.")
+                conexion.close()
+                return
 
-    # Insertar la reservación en la tabla 'reservaciones'
-    sql = """
-    INSERT INTO reservaciones (nombre_cliente, fecha_reserva, hora_reserva, mesa_id, estado)
-    VALUES (%s, %s, %s, %s, 'Pendiente')
-    """
-    valores = (nombre_cliente, fecha_reserva, hora_reserva, mesa_id)
+            # Insertar la nueva mesa
+            cursor.execute(
+                "INSERT INTO mesas (numero_mesa, ubicacion) VALUES (%s, %s)",
+                (numero_mesa, ubicacion)
+            )
+            conexion.commit()
+            messagebox.showinfo("Éxito", "Mesa registrada exitosamente.")
+            conexion.close()
+            cargar_mesas_en_combo()  # Refrescar el combo de mesas disponibles
+        except mysql.connector.Error as err:
+            messagebox.showerror("Error", f"No se pudo registrar la mesa: {err}")
+            conexion.rollback()
+            conexion.close()
 
-    try:
-        cursor.execute(sql, valores)
-        conexion.commit()
-        print("Reservación creada exitosamente.")
-    except mysql.connector.Error as e:
-        print("Error al crear la reservación:", e)
-        conexion.rollback()
+# Función para registrar una reservación
+def registrar_reservacion():
+    nombre_cliente = entry_nombre.get()
+    fecha = entry_fecha.get()
+    hora = entry_hora.get()
+    numero_mesa = combo_mesas.get()
 
-    cerrar_bd(conexion, cursor)
-
-
-def ver_reservaciones():
-    """
-    Muestra las reservaciones almacenadas en la tabla 'reservaciones'.
-    """
-    conexion, cursor = conectar_bd()
-    if not conexion or not cursor:
-        print("No se pudo conectar a la base de datos para ver las reservaciones.")
+    if not (nombre_cliente and fecha and hora and numero_mesa):
+        messagebox.showwarning("Campos vacíos", "Por favor completa todos los campos.")
         return
 
-    sql = "SELECT id_reserva, nombre_cliente, fecha_reserva, hora_reserva, mesa_id, estado FROM reservaciones"
+    conexion = conectar_db()
+    if conexion:
+        try:
+            cursor = conexion.cursor()
 
-    try:
-        cursor.execute(sql)
-        reservaciones = cursor.fetchall()
+            # Obtener mesa_id usando el número de mesa
+            cursor.execute("SELECT mesa_id, estado FROM mesas WHERE numero_mesa = %s", (numero_mesa,))
+            mesa = cursor.fetchone()
 
-        if len(reservaciones) == 0:
-            print("\nNo hay reservaciones registradas.")
-        else:
+            if not mesa:
+                messagebox.showerror("Mesa no encontrada", "La mesa seleccionada no existe.")
+                conexion.close()
+                return
+
+            mesa_id, estado_mesa = mesa
+            if estado_mesa != 'Disponible':
+                messagebox.showerror("Mesa no disponible", "La mesa seleccionada ya está reservada. Elige otra mesa.")
+                conexion.close()
+                return
+
+            # Insertar la reservación
+            cursor.execute(
+                "INSERT INTO reservaciones (nombre_cliente, fecha_reserva, hora_reserva, mesa_id) VALUES (%s, %s, %s, %s)",
+                (nombre_cliente, fecha, hora, mesa_id)
+            )
+            # Actualizar el estado de la mesa
+            cursor.execute(
+                "UPDATE mesas SET estado = 'Reservada' WHERE mesa_id = %s",
+                (mesa_id,)
+            )
+            conexion.commit()
+            messagebox.showinfo("Éxito", "Reservación registrada exitosamente.")
+            conexion.close()
+            cargar_mesas_en_combo()  # Refrescar el combo de mesas disponibles
+        except mysql.connector.Error as err:
+            messagebox.showerror("Error", f"No se pudo registrar la reservación: {err}")
+            conexion.rollback()
+            conexion.close()
+
+# Función para cargar mesas en el combobox
+def cargar_mesas_en_combo():
+    mesas = cargar_mesas()
+    combo_mesas["values"] = [mesa[1] for mesa in mesas]  # Listar solo los números de mesa
+
+# Crear la interfaz gráfica
+app = tk.Tk()
+app.title("Gestión de Reservaciones y Mesas")
+app.geometry("500x400")
+
+# Sección de reservaciones
+tk.Label(app, text="Gestión de Reservaciones", font=("Arial", 14, "bold")).grid(row=0, column=0, columnspan=2, pady=10)
+
+tk.Label(app, text="Nombre del Cliente:").grid(row=1, column=0, padx=10, pady=5, sticky="w")
+entry_nombre = tk.Entry(app)
+entry_nombre.grid(row=1, column=1, padx=10, pady=5)
+
+tk.Label(app, text="Fecha (YYYY-MM-DD):").grid(row=2, column=0, padx=10, pady=5, sticky="w")
+entry_fecha = tk.Entry(app)
+entry_fecha.grid(row=2, column=1, padx=10, pady=5)
+
+tk.Label(app, text="Hora (HH:MM):").grid(row=3, column=0, padx=10, pady=5, sticky="w")
+entry_hora = tk.Entry(app)
+entry_hora.grid(row=3, column=1, padx=10, pady=5)
+
+tk.Label(app, text="Mesa Disponible:").grid(row=4, column=0, padx=10, pady=5, sticky="w")
+combo_mesas = ttk.Combobox(app, state="readonly")
+combo_mesas.grid(row=4, column=1, padx=10, pady=5)
+
+btn_reservar = tk.Button(app, text="Reservar", command=registrar_reservacion)
+btn_reservar.grid(row=5, column=0, columnspan=2, pady=10)
+
+# Sección de mesas
+tk.Label(app, text="Gestión de Mesas", font=("Arial", 14, "bold")).grid(row=6, column=0, columnspan=2, pady=10)
+
+tk.Label(app, text="Número de Mesa:").grid(row=7, column=0, padx=10, pady=5, sticky="w")
+entry_numero_mesa = tk.Entry(app)
+entry_numero_mesa.grid(row=7, column=1, padx=10, pady=5)
+
+tk.Label(app, text="Ubicación:").grid(row=8, column=0, padx=10, pady=5, sticky="w")
+entry_ubicacion = tk.Entry(app)
+entry_ubicacion.grid(row=8, column=1, padx=10, pady=5)
+
+btn_agregar_mesa = tk.Button(app, text="Agregar Mesa", command=registrar_mesa)
+btn_agregar_mesa.grid(row=9, column=0, columnspan=2, pady=10)
+
+# Cargar mesas al iniciar la aplicación
+cargar_mesas_en_combo()
+
+app.mainloop()
